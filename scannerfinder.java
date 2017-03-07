@@ -1,23 +1,19 @@
 
-/*
- * To change this license header, choose License Headers in Project Properties.
- * To change this template file, choose Tools | Templates
- * and open the template in the editor.
- */
-
 /**
  *
+ * used tutorial from:
  *
  * @author Mark Bednarczyk
  * @author Sly Technologies, Inc.
  */
-import java.util.ArrayList;
+
 import org.jnetpcap.Pcap;
+import org.jnetpcap.packet.PcapPacket;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.jnetpcap.Pcap;
 import org.jnetpcap.nio.JMemory;
 import org.jnetpcap.packet.JFlow;
 import org.jnetpcap.packet.JFlowKey;
@@ -25,7 +21,6 @@ import org.jnetpcap.packet.JFlowMap;
 import org.jnetpcap.packet.JPacket;
 import org.jnetpcap.packet.JPacketHandler;
 import org.jnetpcap.packet.JScanner;
-import org.jnetpcap.packet.PcapPacket;
 import org.jnetpcap.protocol.network.Ip4;
 import org.jnetpcap.protocol.tcpip.Http;
 import org.jnetpcap.protocol.tcpip.Tcp;
@@ -34,15 +29,16 @@ public class scannerfinder {
 
     static int count = 0;
     static int ack_count = 0;
-    static HashMap <String, List<Integer>> map = new HashMap();
-    static List <String> ips = new ArrayList<String>();
+    static HashMap<String, List<Integer>> map = new HashMap();
+    static List<String> ips = new ArrayList<String>();
 
     public static void main(String[] args) {
 
         /* 
          * Example #1 open offline capture file for reading packets. 
          */
-        final String FILENAME = "capture.pcap";
+        //final String FILENAME = "capture.pcap";
+        final String FILENAME =args[0];
         final StringBuilder errbuf = new StringBuilder();
 
         final Pcap pcap = Pcap.openOffline(FILENAME, errbuf);
@@ -89,126 +85,95 @@ public class scannerfinder {
                  * then get that header (peer header definition instance with memory in 
                  * the packet) in 2 separate steps. 
                  */
-                if (packet.hasHeader(Tcp.ID)) {
-                    System.out.println("yes!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                if (packet.hasHeader(Tcp.ID)) {  
                     /* 
                      * Now get our tcp header definition (accessor) peered with actual 
                      * memory that holds the tcp header within the packet. 
                      */
                     packet.getHeader(tcp);
-                    
+
                     String sourceIP = "";
                     String destinationIP = "";
-                    
-                    if(packet.hasHeader(ip)){
-                        //System.out.println("destination ip: "+ packet.getHeader(ip).destination());
-                        //System.out.println("source ip: "+ packet.getHeader(ip).source());
-                         sourceIP = org.jnetpcap.packet.format.FormatUtils.ip(packet.getHeader(ip).source());
-                         destinationIP = org.jnetpcap.packet.format.FormatUtils.ip(packet.getHeader(ip).destination());
 
-                        System.out.println("source IP: "+sourceIP);
-                        System.out.println("des IP: "+destinationIP);
-                        
-    
+                    if (packet.hasHeader(ip)) {
+                        //get the source and destination ip
+                        sourceIP = org.jnetpcap.packet.format.FormatUtils.ip(packet.getHeader(ip).source());
+                        destinationIP = org.jnetpcap.packet.format.FormatUtils.ip(packet.getHeader(ip).destination());
+
                     }
-
-//                    System.out.printf("tcp.dst_port=%d%n", tcp.destination());
-//                    System.out.printf("tcp.src_port=%d%n", tcp.source());
-                   // System.out.printf("tcp.ack=%x%n", tcp.ack());
-                    System.out.println("tcp SYN:  " + tcp.flags_SYN());
-                    System.out.println("tcp ACK:  " + tcp.flags_ACK());
-                   
+                    //this is a syn packet
                     if (tcp.flags_SYN()) {
                         count = count + 1;
-                        //this is a syn-ack
+                        //this is a syn-ack 
                         if (tcp.flags_ACK()) {
                             ack_count++;
-                            System.out.println("ITS A SYN ACK");
-                            
-                            if(map.containsKey(destinationIP)){
-                                 List<Integer> tempList = map.get(destinationIP);
+                            //if destination IP is in the map
+                            if (map.containsKey(destinationIP)) {
+                                List<Integer> tempList = map.get(destinationIP);
                                 int syn = tempList.get(0);
                                 int syn_ack = tempList.get(1);
-                                tempList.set(1, syn_ack+1);
+                                tempList.set(1, syn_ack + 1);
                                 map.put(destinationIP, tempList);
-                                
-                            }
-                            else{
+
+                            } else { //add destination IP to the map
                                 List<Integer> tempList = new ArrayList<Integer>();
-                                tempList.set(0,0);
-                                tempList.set(1,1);
+                                tempList.add(0);
+                                tempList.add(0);
+                                tempList.set(0, 0);
+                                tempList.set(1, 1);
                                 map.put(destinationIP, tempList);
-                                
+
                             }
-                            
-                            
+
                         } //this is just a syn
-                        else{
-                            if(map.containsKey(sourceIP)){
+                        else {
+                            //if the map has the source IP
+                            if (map.containsKey(sourceIP)) {
                                 List<Integer> tempList = map.get(sourceIP);
                                 int syn = tempList.get(0);
                                 int syn_ack = tempList.get(1);
-                                tempList.set(0, syn+1);
-                                map.put(sourceIP, tempList); 
-                            }
-                            else{
+                                tempList.set(0, syn + 1);
+                                map.put(sourceIP, tempList);
+                            } else { //add source IP to the map
                                 List<Integer> tempList = new ArrayList<Integer>();
-                                tempList.set(0,1);
-                                tempList.set(1,0);
+                                tempList.add(0);
+                                tempList.add(0);
+                                tempList.set(0, 1);
+                                tempList.set(1, 0);
                                 map.put(sourceIP, tempList);
                             }
                         }
                     }
-                    
-                    
-                }
 
-                /* 
-                 * An easier way of checking if header exists and peering with memory 
-                 * can be done using a conveniece method JPacket.hasHeader(? extends 
-                 * JHeader). This method performs both operations at once returning a 
-                 * boolean true or false. True means that header exists in the packet 
-                 * and our tcp header difinition object is peered or false if the header 
-                 * doesn't exist and no peering was performed. 
-                 */
-//                if (packet.hasHeader(tcp)) {
-//                    System.out.printf("tcp header::%s%n", tcp.toString());
-//                }
+                }
 
             }
 
         }, errbuf);
 
         pcap.close();
-        System.out.println("# of syn: " + count);
-
-        System.out.println("SYN ACK COUNT: " + ack_count);
-        
         compareList();
 
     }
-    
-    public static void compareList(){
-        //for each key in the key set
-        List<String> keyList = new ArrayList<String> ();
+
+    public static void compareList() {
+        //for each key in the key set, compare if it sends 3x more syns than syn-acks
+        List<String> keyList = new ArrayList<String>();
         keyList.addAll(map.keySet());
-        for(int i = 0; i<keyList.size();i++){
+        for (int i = 0; i < keyList.size(); i++) {
             List<Integer> tempList = map.get(keyList.get(i));
             int syn = tempList.get(0);
             int syn_ack = tempList.get(1);
-            
-            if(syn >= (syn_ack*3)){
-                ips.add(keyList.get(i));
+
+            if (syn >= (syn_ack * 3)) {
+                ips.add(keyList.get(i)); //if it does, add it to the list of attacker ips
             }
-            
+
         }
-        System.out.println("LIST OF IP ADDRESSES");
-        for(int j=0;j<ips.size();j++){
+        //print list of attacker ip addresses
+        for (int j = 0; j < ips.size(); j++) {
             System.out.println(ips.get(j));
         }
     }
-    
-    
-    
-}
 
+}
