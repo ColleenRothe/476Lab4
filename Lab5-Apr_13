@@ -1,0 +1,702 @@
+
+/**
+ *
+ * used tutorial from:
+ *
+ * @author Mark Bednarczyk
+ * @author Sly Technologies, Inc.
+ */
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.IOException;
+import org.jnetpcap.Pcap;
+import org.jnetpcap.packet.PcapPacket;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.jnetpcap.nio.JMemory;
+import org.jnetpcap.packet.JFlow;
+import org.jnetpcap.packet.JFlowKey;
+import org.jnetpcap.packet.JFlowMap;
+import org.jnetpcap.packet.JPacket;
+import org.jnetpcap.packet.JPacketHandler;
+import org.jnetpcap.packet.JScanner;
+import org.jnetpcap.packet.Payload;
+import org.jnetpcap.protocol.network.Ip4;
+import org.jnetpcap.protocol.tcpip.Http;
+import org.jnetpcap.protocol.tcpip.Tcp;
+import org.jnetpcap.protocol.tcpip.Udp;
+
+public class scannerfinder {
+
+    static HashMap<String, String> dict;
+    static final String FILENAME = "trace3.pcap";
+    static int checkSize = 2;
+    static List<Boolean> check = new ArrayList();
+
+
+    public static void main(String[] args) throws IOException {
+
+        /* 
+         * Example #1 open offline capture file for reading packets. 
+         */
+        readPolicy();
+         for (int i = 0; i < checkSize; i++) {
+                      check.add(false);
+                    }
+
+        if (dict.get("type").contains("stateless")) {
+            //System.out.println("STATELESS");
+            if (dict.get("proto").contains("tcp")) {
+                //System.out.println("TCP");
+
+                statelessTCP();
+
+            } else if (dict.get("proto").contains("udp")) {
+                System.out.println("UDP-------------");
+                statelessUDP();
+            }
+        }else if(dict.get("type").contains("stateful")){
+            stateful();
+        }
+
+    }
+    
+    public static void stateful(){
+         //final String FILENAME =args[0];
+        final StringBuilder errbuf = new StringBuilder();
+
+        final Pcap pcap = Pcap.openOffline(FILENAME, errbuf);
+        if (pcap == null) {
+            System.err.println(errbuf); // Error is stored in errbuf if any  
+            return;
+        }
+        pcap.loop(Pcap.LOOP_INFINITE, new JPacketHandler<StringBuilder>() {
+            final Tcp tcp = new Tcp();
+            final Ip4 ip = new Ip4();
+            int f = 0;
+            int t = 0;
+            int allCheck = 0;
+             
+         
+            /* 
+             * Same thing for our http header 
+             */
+            final Http http = new Http();
+
+            public void nextPacket(JPacket packet, StringBuilder errbuf) {
+               
+                
+
+                /* 
+                 * Here we receive 1 packet at a time from the capture file. We are 
+                 * going to check if we have a tcp packet and do something with tcp 
+                 * header. We are actually going to do this twice to show 2 different 
+                 * ways how we can check if a particular header exists in the packet and 
+                 * then get that header (peer header definition instance with memory in 
+                 * the packet) in 2 separate steps. 
+                 */
+                if (packet.hasHeader(Tcp.ID)) {
+                    /* 
+                     * Now get our tcp header definition (accessor) peered with actual 
+                     * memory that holds the tcp header within the packet. 
+                     */
+                    packet.getHeader(tcp);
+
+                    String sourceIP = "";
+                    String destinationIP = "";
+                    int sourcePort = 0;
+                    int destinationPort = 0;
+
+                    //host ip (destination)
+                    String hostIP = "";
+                    //host port
+                    String host_port = "";
+                    //attacker port
+                    String attacker_port = "";
+                    //attacker ip
+                    String attacker_ip = "";
+                    //message
+                    String to_host = "";
+                    List<String> to_hostArray = new ArrayList();
+                    //message
+                    String from_host = "";
+                    List<String> from_hostArray = new ArrayList();
+                    //to hold the booleans
+
+                    if (!dict.get("host").contains("any")) {
+                        hostIP = dict.get("host");
+                    }
+                    if (!dict.get("host_port").contains("any")) {
+                        host_port = dict.get("host_port");
+                    }
+
+                    if (!dict.get("attacker_port").contains("any")) {
+                        attacker_port = dict.get("attacker_port");
+                    }
+                    if (!dict.get("attacker").contains("any")) {
+                        attacker_ip = dict.get("attacker");
+                    }
+
+                    if (dict.containsKey("to_host")) {
+                        if (dict.get("to_host").contains("-")) {
+                            //know array
+                            String temp;
+                            temp = dict.get("to_host");
+                            temp = temp.replace("\"", "");
+                            to_hostArray = Arrays.asList(temp.split("-"));
+
+                        } else {
+                            to_host = dict.get("to_host");
+                        }
+
+                    }
+
+                    if (dict.containsKey("from_host")) {
+                        if (dict.get("from_host").contains("-")) {
+                            //know arrayng
+                            String temp;
+                            temp = dict.get("from_host");
+                            temp = temp.replace("\"", "");
+
+                            from_hostArray = Arrays.asList(temp.split("-"));
+
+                        } else {
+                            from_host = dict.get("from_host");
+                        }
+
+                    }
+
+                   
+                    
+                   
+
+                    if (packet.hasHeader(ip)) {
+                        //get the source and destination ip
+                        sourceIP = org.jnetpcap.packet.format.FormatUtils.ip(packet.getHeader(ip).source());
+                        destinationIP = org.jnetpcap.packet.format.FormatUtils.ip(packet.getHeader(ip).destination());
+
+                        sourcePort = tcp.source(); //get the source port
+                        destinationPort = tcp.destination(); //get the destination port
+                        Payload payload = new Payload();
+                        //message?
+                        if (packet.hasHeader(payload)) {
+
+                            //System.out.println("payload length = "+payload.getLength());
+                            byte[] payloadContent = payload.getByteArray(0, payload.size());
+                            String strPayloadContent = new String(payloadContent);
+//                            System.out.println("source: " + sourceIP);
+//                            System.out.println("dest: " + destinationIP);
+//                            System.out.println("source port: " + sourcePort);
+//                            System.out.println("destination port:" + destinationPort);
+                            System.out.println("payload content = [" + strPayloadContent + "]");
+
+                            if (from_hostArray.isEmpty()) {
+                                if (hostIP.equals(destinationIP)) {
+                                    if (host_port.equals(String.valueOf(destinationPort)) || host_port.equals("")) {
+                                        if (attacker_port.equals(String.valueOf(sourcePort)) || attacker_port.equals("")) {
+                                            if (attacker_ip.equals(sourceIP) || attacker_ip.equals("")) {
+                                                //change here
+                                                if (strPayloadContent.contains(to_host)) {
+                                                    System.out.println("WARNING!!!!! ATTACK DETECTED");
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } //empty
+                            else { //multiple back and forth..........
+                                //source is host, destination is attacker
+                                if(hostIP.contains(sourceIP) || hostIP.equals("")){
+                                    //System.out.println("(1)HOST IP IS SOURCE");
+                                    if(host_port.contains(String.valueOf(sourcePort)) || host_port.equals("")){
+                                        // System.out.println("(2)HOST PORT IS SOURCE");
+                                        if(attacker_ip.contains(destinationIP) || attacker_ip.equals("")){
+                                            //System.out.println("(3)ATTACKER IP IS destination");
+                                            if(attacker_port.contains(String.valueOf(destinationPort)) || attacker_port.equals("")){
+                                                 //System.out.println("(4)ATTACKER port IS destination");
+                                              
+                                                 //Pattern p = Pattern.compile("\\+OK.*\r\n"); //this works!!!
+                                                Pattern p2 = Pattern.compile(from_hostArray.get(f).replace(" ",""));
+                                                Matcher m = p2.matcher(strPayloadContent); //strPayloadContent
+                                                
+                                                if(m.matches()){
+                                                    //System.out.println("MATCH(1)");
+                                                    check.set(allCheck, Boolean.TRUE);
+                                                    f++;
+                                                    allCheck++;
+                                                }
+                                                else{
+                                                f = 0;
+                                                t=0;
+                                                allCheck = 0;
+                                                for(int l = 0; l<check.size(); l++){
+                                                    check.set(l, false);
+                                                }
+                                            }
+                                            }
+                                        }
+                                    }
+                                    
+                                    //check if all true
+                                     Boolean flag = true;
+                                        for (int j = 0; j < check.size(); j++) {
+                                             if (check.get(j) == false) {
+                                                 flag = false;
+                                             }
+                                           }
+                                    if (flag == true) {
+                                     System.out.println("WARNING!!!!! ATTACK DETECTED");
+                                        System.exit(0);
+                                    }
+                                }
+                                
+                                   //attacker is host, destination is source
+                                else if(hostIP.contains(destinationIP) || hostIP.equals("") ){
+                                   //System.out.println("(1.1)HOST IP IS DESTINATION");
+                                    if(host_port.contains(String.valueOf(destinationPort)) || host_port.equals("")){
+                                         //System.out.println("(2.1)HOST PORT IS DESTINATION");
+                                        if(attacker_ip.contains(sourceIP) || attacker_ip.equals("")){
+                                            //System.out.println("(3.1)ATTACKER IP IS SOURCE");
+                                            if(attacker_port.contains(String.valueOf(sourcePort)) || attacker_port.equals("")){
+                                               // System.out.println("(4.1)ATTACKER port IS SOURCE");
+                                                Pattern p = Pattern.compile(to_hostArray.get(t).replace(" ",""));
+                                                Matcher m = p.matcher(strPayloadContent);
+                                                if(m.find()){
+                                                    //System.out.println("MATCH(2)-");
+                                                    check.set(allCheck, Boolean.TRUE);
+                                                    t++;
+                                                    allCheck++;
+                                                }else{
+                                                    f=0;
+                                                    t = 0;
+                                                    allCheck = 0;
+                                                    for(int l = 0; l<check.size(); l++){
+                                                        check.set(l, false);
+                                                    }
+                                                }
+                                                
+                                                
+                                            }
+                                        }
+                                    }
+                                }
+                                     
+                            
+                            } //end else
+
+                        }//payload header
+
+                        System.out.println("source: " + sourceIP);
+                        System.out.println("dest: " +destinationIP);
+                        System.out.println("source port: " + sourcePort);
+                         System.out.println("destination port:" + destinationPort);
+                    } //end ip
+
+                   
+                }
+            }
+        }, errbuf);
+        pcap.close();
+        
+        
+    }
+
+    public static void statelessTCP() {
+        //final String FILENAME =args[0];
+        final StringBuilder errbuf = new StringBuilder();
+
+        final Pcap pcap = Pcap.openOffline(FILENAME, errbuf);
+        if (pcap == null) {
+            System.err.println(errbuf); // Error is stored in errbuf if any  
+            return;
+        }
+        pcap.loop(Pcap.LOOP_INFINITE, new JPacketHandler<StringBuilder>() {
+            final Tcp tcp = new Tcp();
+            final Ip4 ip = new Ip4();
+            int f = 0;
+            int t = 0;
+            int allCheck = 0;
+             
+         
+            /* 
+             * Same thing for our http header 
+             */
+            final Http http = new Http();
+
+            public void nextPacket(JPacket packet, StringBuilder errbuf) {
+               
+                
+
+                /* 
+                 * Here we receive 1 packet at a time from the capture file. We are 
+                 * going to check if we have a tcp packet and do something with tcp 
+                 * header. We are actually going to do this twice to show 2 different 
+                 * ways how we can check if a particular header exists in the packet and 
+                 * then get that header (peer header definition instance with memory in 
+                 * the packet) in 2 separate steps. 
+                 */
+                if (packet.hasHeader(Tcp.ID)) {
+                    /* 
+                     * Now get our tcp header definition (accessor) peered with actual 
+                     * memory that holds the tcp header within the packet. 
+                     */
+                    packet.getHeader(tcp);
+
+                    String sourceIP = "";
+                    String destinationIP = "";
+                    int sourcePort = 0;
+                    int destinationPort = 0;
+
+                    //host ip (destination)
+                    String hostIP = "";
+                    //host port
+                    String host_port = "";
+                    //attacker port
+                    String attacker_port = "";
+                    //attacker ip
+                    String attacker_ip = "";
+                    //message
+                    String to_host = "";
+                    List<String> to_hostArray = new ArrayList();
+                    //message
+                    String from_host = "";
+                    List<String> from_hostArray = new ArrayList();
+                    //to hold the booleans
+
+                    if (!dict.get("host").contains("any")) {
+                        hostIP = dict.get("host");
+                    }
+                    if (!dict.get("host_port").contains("any")) {
+                        host_port = dict.get("host_port");
+                    }
+
+                    if (!dict.get("attacker_port").contains("any")) {
+                        attacker_port = dict.get("attacker_port");
+                    }
+                    if (!dict.get("attacker").contains("any")) {
+                        attacker_ip = dict.get("attacker");
+                    }
+
+                    if (dict.containsKey("to_host")) {
+                        if (dict.get("to_host").contains("-")) {
+                            //know array
+                            String temp;
+                            temp = dict.get("to_host");
+                            temp = temp.replace("\"", "");
+                            to_hostArray = Arrays.asList(temp.split("-"));
+
+                        } else {
+                            to_host = dict.get("to_host");
+                        }
+
+                    }
+
+                    if (dict.containsKey("from_host")) {
+                        if (dict.get("from_host").contains("-")) {
+                            //know arrayng
+                            String temp;
+                            temp = dict.get("from_host");
+                            temp = temp.replace("\"", "");
+
+                            from_hostArray = Arrays.asList(temp.split("-"));
+
+                        } else {
+                            from_host = dict.get("from_host");
+                        }
+
+                    }
+
+                   
+                    
+                   
+
+                    if (packet.hasHeader(ip)) {
+                        //get the source and destination ip
+                        sourceIP = org.jnetpcap.packet.format.FormatUtils.ip(packet.getHeader(ip).source());
+                        destinationIP = org.jnetpcap.packet.format.FormatUtils.ip(packet.getHeader(ip).destination());
+
+                        sourcePort = tcp.source(); //get the source port
+                        destinationPort = tcp.destination(); //get the destination port
+                        Payload payload = new Payload();
+                        //message?
+                        if (packet.hasHeader(payload)) {
+
+                            //System.out.println("payload length = "+payload.getLength());
+                            byte[] payloadContent = payload.getByteArray(0, payload.size());
+                            String strPayloadContent = new String(payloadContent);
+//                            System.out.println("source: " + sourceIP);
+//                            System.out.println("dest: " + destinationIP);
+//                            System.out.println("source port: " + sourcePort);
+//                            System.out.println("destination port:" + destinationPort);
+                           // System.out.println("payload content = [" + strPayloadContent + "]");
+
+                            if (from_hostArray.isEmpty()) {
+                                if (hostIP.equals(destinationIP)) {
+                                    if (host_port.equals(String.valueOf(destinationPort)) || host_port.equals("")) {
+                                        if (attacker_port.equals(String.valueOf(sourcePort)) || attacker_port.equals("")) {
+                                            if (attacker_ip.equals(sourceIP) || attacker_ip.equals("")) {
+                                                //change here
+                                                if (strPayloadContent.contains(to_host)) {
+                                                    System.out.println("WARNING!!!!! ATTACK DETECTED");
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } //empty
+                            else { //multiple back and forth..........
+                                //source is host, destination is attacker
+                                if(hostIP.contains(sourceIP) || hostIP.equals("")){
+                                    //System.out.println("(1)HOST IP IS SOURCE");
+                                    if(host_port.contains(String.valueOf(sourcePort)) || host_port.equals("")){
+                                        // System.out.println("(2)HOST PORT IS SOURCE");
+                                        if(attacker_ip.contains(destinationIP) || attacker_ip.equals("")){
+                                            //System.out.println("(3)ATTACKER IP IS destination");
+                                            if(attacker_port.contains(String.valueOf(destinationPort)) || attacker_port.equals("")){
+                                                 //System.out.println("(4)ATTACKER port IS destination");
+                                              
+                                                 //Pattern p = Pattern.compile("\\+OK.*\r\n"); //this works!!!
+                                                Pattern p2 = Pattern.compile(from_hostArray.get(f).replace(" ",""));
+                                                Matcher m = p2.matcher(strPayloadContent); //strPayloadContent
+                                                
+                                                if(m.matches()){
+                                                    //System.out.println("MATCH(1)");
+                                                    check.set(allCheck, Boolean.TRUE);
+                                                    f++;
+                                                    allCheck++;
+                                                }
+                                                else{
+                                                f = 0;
+                                                t=0;
+                                                allCheck = 0;
+                                                for(int l = 0; l<check.size(); l++){
+                                                    check.set(l, false);
+                                                }
+                                            }
+                                            }
+                                        }
+                                    }
+                                    
+                                    //check if all true
+                                     Boolean flag = true;
+                                        for (int j = 0; j < check.size(); j++) {
+                                             if (check.get(j) == false) {
+                                                 flag = false;
+                                             }
+                                           }
+                                    if (flag == true) {
+                                     System.out.println("WARNING!!!!! ATTACK DETECTED");
+                                        System.exit(0);
+                                    }
+                                }
+                                
+                                   //attacker is host, destination is source
+                                else if(hostIP.contains(destinationIP) || hostIP.equals("") ){
+                                   //System.out.println("(1.1)HOST IP IS DESTINATION");
+                                    if(host_port.contains(String.valueOf(destinationPort)) || host_port.equals("")){
+                                         //System.out.println("(2.1)HOST PORT IS DESTINATION");
+                                        if(attacker_ip.contains(sourceIP) || attacker_ip.equals("")){
+                                            //System.out.println("(3.1)ATTACKER IP IS SOURCE");
+                                            if(attacker_port.contains(String.valueOf(sourcePort)) || attacker_port.equals("")){
+                                               // System.out.println("(4.1)ATTACKER port IS SOURCE");
+                                                Pattern p = Pattern.compile(to_hostArray.get(t).replace(" ",""));
+                                                Matcher m = p.matcher(strPayloadContent);
+                                                if(m.find()){
+                                                    //System.out.println("MATCH(2)-");
+                                                    check.set(allCheck, Boolean.TRUE);
+                                                    t++;
+                                                    allCheck++;
+                                                }else{
+                                                    f=0;
+                                                    t = 0;
+                                                    allCheck = 0;
+                                                    for(int l = 0; l<check.size(); l++){
+                                                        check.set(l, false);
+                                                    }
+                                                }
+                                                
+                                                
+                                            }
+                                        }
+                                    }
+                                }
+                                     
+                            
+                            } //end else
+
+                        }//payload header
+
+                        System.out.println("source: " + sourceIP);
+                        System.out.println("dest: " +destinationIP);
+                        System.out.println("source port: " + sourcePort);
+                         System.out.println("destination port:" + destinationPort);
+                    } //end ip
+
+                   
+                }
+            }
+        }, errbuf);
+        pcap.close();
+    }
+
+    public static void statelessUDP() {
+        //final String FILENAME =args[0];
+        final StringBuilder errbuf = new StringBuilder();
+
+        final Pcap pcap = Pcap.openOffline(FILENAME, errbuf);
+        if (pcap == null) {
+            System.err.println(errbuf); // Error is stored in errbuf if any  
+            return;
+        }
+
+        pcap.loop(Pcap.LOOP_INFINITE, new JPacketHandler<StringBuilder>() {
+            final Udp udp = new Udp();
+            final Ip4 ip = new Ip4();
+
+            boolean p1 = false;
+            boolean p2 = false;
+            /* 
+             * Same thing for our http header 
+             */
+            final Http http = new Http();
+
+            public void nextPacket(JPacket packet, StringBuilder errbuf) {
+
+                /* 
+                 * Here we receive 1 packet at a time from the capture file. We are 
+                 * going to check if we have a tcp packet and do something with tcp 
+                 * header. We are actually going to do this twice to show 2 different 
+                 * ways how we can check if a particular header exists in the packet and 
+                 * then get that header (peer header definition instance with memory in 
+                 * the packet) in 2 separate steps. 
+                 */
+                if (packet.hasHeader(Udp.ID)) {
+                    /* 
+                     * Now get our tcp header definition (accessor) peered with actual 
+                     * memory that holds the tcp header within the packet. 
+                     */
+                    packet.getHeader(udp);
+
+                    String sourceIP = "";
+                    String destinationIP = "";
+                    int sourcePort = 0;
+                    int destinationPort = 0;
+
+                    //host ip (destination)
+                    String hostIP = "";
+                    //host port
+                    String host_port = "";
+                    //attacker port
+                    String attacker_port = "";
+                    //attacker ip
+                    String attacker_ip = "";
+                    //message
+                    String to_host = "";
+                    //from host message 
+                    String from_host = "";
+
+                    if (!dict.get("host").equals("any")) {
+                        hostIP = dict.get("host");
+                    }
+                    if (!dict.get("host_port").equals("any")) {
+                        host_port = dict.get("host_port");
+                    }
+
+                    if (!dict.get("attacker_port").equals("any")) {
+                        attacker_port = dict.get("attacker_port");
+                    }
+                    if (!dict.get("attacker").equals("any")) {
+                        attacker_ip = dict.get("attacker");
+                    }
+
+                    if (dict.containsKey("to_host")) {
+                        to_host = dict.get("to_host");
+                    }
+
+                    if (dict.containsKey("from_host")) {
+                        from_host = dict.get("from_host");
+                    }
+
+                    if (packet.hasHeader(ip)) {
+                        //get the source and destination ip
+                        sourceIP = org.jnetpcap.packet.format.FormatUtils.ip(packet.getHeader(ip).source());
+                        destinationIP = org.jnetpcap.packet.format.FormatUtils.ip(packet.getHeader(ip).destination());
+
+                        sourcePort = udp.source(); //get the source port
+                        destinationPort = udp.destination(); //get the destination port
+                        Payload payload = new Payload();
+                        //message?
+                        if (packet.hasHeader(payload)) {
+                            //System.out.println("payload length = "+payload.getLength());
+                            byte[] payloadContent = payload.getByteArray(0, payload.size());
+                            String strPayloadContent = new String(payloadContent);
+                            //System.out.println("payload content = ["+strPayloadContent+"]");
+
+                            if (hostIP.equals(destinationIP)) {
+                                if (host_port.equals(String.valueOf(destinationPort)) || host_port.equals("")) {
+                                    if (strPayloadContent.contains(from_host)) {
+                                        p1 = true;
+                                    }
+                                }
+                            }
+
+                            if (attacker_ip.equals(sourceIP)) {
+                                if (attacker_port.equals(String.valueOf(sourcePort)) || attacker_port.equals("")) {
+                                    if (strPayloadContent.contains(to_host)) {
+                                        p2 = true;
+                                    }
+                                }
+                            }
+
+                        }
+
+                        //System.out.println("source: " + sourceIP);
+                        //System.out.println("dest: " +destinationIP);
+                        //System.out.println("source port: " + sourcePort);
+                        // System.out.println("destination port:" + destinationPort);
+                    } //end ip
+                }
+                if (p1 && p2) {
+                    System.out.println("ATTACK!!!!!");
+                }
+            }
+        }, errbuf);
+        pcap.close();
+
+    }
+
+    public static void readPolicy() throws IOException {
+        dict = new HashMap();
+
+        FileReader in = new FileReader("policy3.txt");
+        BufferedReader br = new BufferedReader(in);
+        String line = br.readLine();
+        int i = 0;
+        while (line != null) {
+            if (line.contains("=")) {
+                String[] temp = line.split("=");
+                if (dict.containsKey(temp[0])) {
+                    String value = dict.get(temp[0]);
+                    value = value + "-" + temp[1];
+                    dict.replace(temp[0], value);
+                    checkSize++;
+                } else {
+                    dict.put(temp[0], temp[1]);
+                }
+                //System.out.println(line);
+
+            }
+            line = br.readLine();
+
+        }
+        in.close();
+        System.out.println(dict.keySet());
+
+    }
+}
